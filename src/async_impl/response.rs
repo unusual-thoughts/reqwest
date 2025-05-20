@@ -19,6 +19,7 @@ use super::decoder::{Accepts, Decoder};
 use crate::async_impl::body::ResponseBody;
 #[cfg(feature = "cookies")]
 use crate::cookie;
+use crate::response::History;
 
 #[cfg(feature = "charset")]
 use encoding_rs::{Encoding, UTF_8};
@@ -79,13 +80,18 @@ impl Response {
         self.res.headers_mut()
     }
 
-    /// Get the content-length of this response, if known.
+    /// Get the content length of the response, if it is known.
+    ///
+    /// This value does not directly represents the value of the `Content-Length`
+    /// header, but rather the size of the response's body. To read the header's
+    /// value, please use the [`Response::headers`] method instead.
     ///
     /// Reasons it may not be known:
     ///
-    /// - The server didn't send a `content-length` header.
-    /// - The response is compressed and automatically decoded (thus changing
-    ///   the actual decoded length).
+    /// - The response does not include a body (e.g. it responds to a `HEAD`
+    ///   request).
+    /// - The response is gzipped and automatically decoded (thus changing the
+    ///   actual decoded length).
     pub fn content_length(&self) -> Option<u64> {
         use hyper::body::Body;
 
@@ -111,6 +117,21 @@ impl Response {
         &self.url
     }
 
+    /// Get all the intermediate `Url`s traversed by redirects.
+    #[inline]
+    pub fn history(&self) -> &[Url] {
+        self.extensions().get::<History>().map_or(&[], |h| &h.0)
+    }
+
+    /// Get all the `Url`s, in sequential order, that were requested,
+    /// including any redirects and the final url.
+    #[inline]
+    pub fn all_urls(&self) -> impl Iterator<Item = &Url> {
+        self.history()
+            .iter()
+            .chain(std::iter::once(self.url.as_ref()))
+    }
+
     /// Get the remote address used to get this `Response`.
     pub fn remote_addr(&self) -> Option<SocketAddr> {
         self.res
@@ -134,7 +155,8 @@ impl Response {
     /// Get the full response text.
     ///
     /// This method decodes the response body with BOM sniffing
-    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// and with malformed sequences replaced with the
+    /// [`char::REPLACEMENT_CHARACTER`].
     /// Encoding is determined from the `charset` parameter of `Content-Type` header,
     /// and defaults to `utf-8` if not presented.
     ///
@@ -175,7 +197,7 @@ impl Response {
     /// Get the full response text given a specific encoding.
     ///
     /// This method decodes the response body with BOM sniffing
-    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// and with malformed sequences replaced with the [`char::REPLACEMENT_CHARACTER`].
     /// You can provide a default encoding for decoding the raw message, while the
     /// `charset` parameter of `Content-Type` header is still prioritized. For more information
     /// about the possible encoding name, please go to [`encoding_rs`] docs.
@@ -501,5 +523,7 @@ mod tests {
 
         assert_eq!(response.status(), 200);
         assert_eq!(*response.url(), url);
+        assert!(response.history().is_empty());
+        assert_eq!(response.all_urls().collect::<Vec<_>>(), vec![&url]);
     }
 }

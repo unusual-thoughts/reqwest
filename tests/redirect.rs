@@ -4,6 +4,7 @@ mod support;
 use http_body_util::BodyExt;
 use reqwest::Body;
 use support::server;
+use url::Url;
 
 #[tokio::test]
 async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
@@ -34,6 +35,14 @@ async fn test_redirect_301_and_302_and_303_changes_post_to_get() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.post(&url).send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
+        assert_eq!(
+            res.history().iter().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url]
+        );
+        assert_eq!(
+            res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url, &dst]
+        );
         assert_eq!(res.status(), reqwest::StatusCode::OK);
         assert_eq!(
             res.headers().get(reqwest::header::SERVER).unwrap(),
@@ -70,6 +79,14 @@ async fn test_redirect_307_and_308_tries_to_get_again() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.get(&url).send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
+        assert_eq!(
+            res.history().iter().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url]
+        );
+        assert_eq!(
+            res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url, &dst]
+        );
         assert_eq!(res.status(), reqwest::StatusCode::OK);
         assert_eq!(
             res.headers().get(reqwest::header::SERVER).unwrap(),
@@ -119,6 +136,14 @@ async fn test_redirect_307_and_308_tries_to_post_again() {
         let dst = format!("http://{}/{}", redirect.addr(), "dst");
         let res = client.post(&url).body("Hello").send().await.unwrap();
         assert_eq!(res.url().as_str(), dst);
+        assert_eq!(
+            res.history().iter().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url]
+        );
+        assert_eq!(
+            res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url, &dst]
+        );
         assert_eq!(res.status(), reqwest::StatusCode::OK);
         assert_eq!(
             res.headers().get(reqwest::header::SERVER).unwrap(),
@@ -163,6 +188,11 @@ fn test_redirect_307_does_not_try_if_reader_cannot_reset() {
             .send()
             .unwrap();
         assert_eq!(res.url().as_str(), url);
+        assert!(res.history().is_empty());
+        assert_eq!(
+            res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+            vec![&url]
+        );
         assert_eq!(res.status(), code);
     }
 }
@@ -253,6 +283,11 @@ async fn test_redirect_policy_can_stop_redirects_without_an_error() {
         .unwrap();
 
     assert_eq!(res.url().as_str(), url);
+    assert!(res.history().is_empty());
+    assert_eq!(
+        res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+        vec![&url]
+    );
     assert_eq!(res.status(), reqwest::StatusCode::FOUND);
 }
 
@@ -298,6 +333,11 @@ async fn test_invalid_location_stops_redirect_gh484() {
     let res = reqwest::get(&url).await.unwrap();
 
     assert_eq!(res.url().as_str(), url);
+    assert!(res.history().is_empty());
+    assert_eq!(
+        res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+        vec![&url]
+    );
     assert_eq!(res.status(), reqwest::StatusCode::FOUND);
 }
 
@@ -346,6 +386,14 @@ async fn test_redirect_302_with_set_cookies() {
     let res = client.get(&url).send().await.unwrap();
 
     assert_eq!(res.url().as_str(), dst);
+    assert_eq!(
+        res.history().iter().map(Url::as_str).collect::<Vec<_>>(),
+        vec![&url]
+    );
+    assert_eq!(
+        res.all_urls().map(Url::as_str).collect::<Vec<_>>(),
+        vec![&url, &dst]
+    );
     assert_eq!(res.status(), reqwest::StatusCode::OK);
 }
 
@@ -375,4 +423,38 @@ async fn test_redirect_https_only_enforced_gh1312() {
 
     let err = res.unwrap_err();
     assert!(err.is_redirect());
+}
+
+#[tokio::test]
+async fn test_redirect_limit_to_1() {
+    let server = server::http(move |req| async move {
+        let i: i32 = req
+            .uri()
+            .path()
+            .rsplit('/')
+            .next()
+            .unwrap()
+            .parse::<i32>()
+            .unwrap();
+        assert!(req.uri().path().ends_with(&format!("/redirect/{i}")));
+        http::Response::builder()
+            .status(302)
+            .header("location", format!("/redirect/{}", i + 1))
+            .body(Body::default())
+            .unwrap()
+    });
+    // The number at the end of the uri indicates the total number of redirections
+    let url = format!("http://{}/redirect/0", server.addr());
+
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(1))
+        .build()
+        .unwrap();
+    let res = client.get(&url).send().await.unwrap_err();
+    // If the maxmium limit is 1, then the final uri should be /redirect/1
+    assert_eq!(
+        res.url().unwrap().as_str(),
+        format!("http://{}/redirect/1", server.addr()).as_str()
+    );
+    assert!(res.is_redirect());
 }

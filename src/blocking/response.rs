@@ -163,6 +163,19 @@ impl Response {
         self.inner.url()
     }
 
+    /// Get all the intermediate `Url`s traversed by redirects.
+    #[inline]
+    pub fn history(&self) -> &[Url] {
+        self.inner.history()
+    }
+
+    /// Get all the `Url`s, in sequential order, that were requested,
+    /// including any redirects and the final url.
+    #[inline]
+    pub fn all_urls(&self) -> impl Iterator<Item = &Url> {
+        self.inner.all_urls()
+    }
+
     /// Get the remote address used to get this `Response`.
     ///
     /// # Example
@@ -188,13 +201,19 @@ impl Response {
         self.inner.extensions_mut()
     }
 
-    /// Get the content-length of the response, if it is known.
+    /// Get the content length of the response, if it is known.
+    ///
+    ///
+    /// This value does not directly represents the value of the `Content-Length`
+    /// header, but rather the size of the response's body. To read the header's
+    /// value, please use the [`Response::headers`] method instead.
     ///
     /// Reasons it may not be known:
     ///
-    /// - The server didn't send a `content-length` header.
-    /// - The response is gzipped and automatically decoded (thus changing
-    ///   the actual decoded length).
+    /// - The response does not include a body (e.g. it responds to a `HEAD`
+    ///   request).
+    /// - The response is gzipped and automatically decoded (thus changing the
+    ///   actual decoded length).
     pub fn content_length(&self) -> Option<u64> {
         self.inner.content_length()
     }
@@ -266,7 +285,7 @@ impl Response {
     /// Get the response text.
     ///
     /// This method decodes the response body with BOM sniffing
-    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// and with malformed sequences replaced with the [`char::REPLACEMENT_CHARACTER`].
     /// Encoding is determined from the `charset` parameter of `Content-Type` header,
     /// and defaults to `utf-8` if not presented.
     ///
@@ -294,7 +313,7 @@ impl Response {
     /// Get the response text given a specific encoding.
     ///
     /// This method decodes the response body with BOM sniffing
-    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// and with malformed sequences replaced with the [`char::REPLACEMENT_CHARACTER`].
     /// You can provide a default encoding for decoding the raw message, while the
     /// `charset` parameter of `Content-Type` header is still prioritized. For more information
     /// about the possible encoding name, please go to [`encoding_rs`] docs.
